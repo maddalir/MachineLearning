@@ -1,0 +1,85 @@
+---
+title: "Human Activity Prediction - Weightlifting"
+author: "Raj Maddali"
+date: "January 22, 2016"
+output: html_document
+---
+
+**Executive Summary **
+
+We attempt to predict an activity by using data collected by sensors. Based on the quality of the data collected and analysed the model presented below perfoms a good prediction of the activity on the test data set.
+
+**Data Acquisition **
+
+Training and Testing sets data has been provided in two distinct files which are loaded below
+```{r, results='hold',message=FALSE,echo=TRUE,cache=TRUE}
+Etrain <- read.csv("pml-training.csv")
+dim(Etrain)
+Etest <- read.csv("pml-testing.csv")
+dim(Etest)
+```
+
+**Data Analysis and Preparation**
+
+Descriptive variables  ("X","user_name","raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp","new_window","num_window"  ) have been excluded. Also columns with sparse data. The data in these sparse columns also seem to be summary variables. These steps bring the column count to a more predictible count (52). A corrolation plot below shows that we are left with a vast majority of variables that aren't strongly correlated to each other. 
+
+```{r, results='hold',message=FALSE,warning=FALSE,echo=TRUE,cache=TRUE,fig.height=8}
+library(caret)
+library(matrixStats)
+library(plyr)
+
+EtrainX <- Etrain[,-c(1:7)]
+indx <- sapply(EtrainX[,-153], is.factor)
+EtrainX[indx] <- lapply(EtrainX[indx], function(x) as.numeric(as.character(x)))
+
+nzv <- nearZeroVar(EtrainX[,-153],saveMetrics=TRUE)
+EtrainY <- EtrainX[,nzv$nzv==FALSE]
+#EtrainY$classe <- EtrainX$classe
+EtrainZ <- EtrainY[,(colSums(!is.na(EtrainY[,-118])) > 500)]
+colnames(EtrainZ)
+
+library(corrplot)
+cor1 <- cor(EtrainZ[,-53])
+corrplot(cor1,type="upper",tl.cex = .6)
+
+
+df1 <- data.frame(colVars(as.matrix(EtrainZ[,1:52])))
+df1$colNum <- 1:nrow(df1)
+names(df1) <- c("coeffs","colnum")
+df1 <- arrange(df1,desc(coeffs))
+df1$colnum[1:8]
+featurePlot(x=EtrainZ[,c(as.vector(df1$colnum[1:6]))],y=EtrainZ$classe,plot="box",layout = c(3,2), labels = c("Classe Outcome",""))
+
+
+```
+
+**Model Building **
+
+The choice of model needs to be investigated. There are too many variables and the outcome to choose any variant of a General Linear Model. That means we attempt to forecast outcomes using tree based models. Our first attempt at a tree based model leads us to rather unsatisfactory resulst
+
+The size of the data allows us to work on tree based models. The classification tree below provides a very mediocre fit. It is very good at classifying classe A, but poor at the other. There are two many variable interactions for good tree performance.
+
+```{r,  results='hold',message=FALSE,warning=FALSE,echo=TRUE,cache=TRUE,fig.height=8}
+set.seed(12234)
+library(tree)
+t1 <- tree(classe ~ .,data=EtrainZ,split=c("gini"),control=tree.control(nobs=19622,mincut=2000))
+#t1 <- tree(classe ~ .,data=EtrainZ,split=c("gini"),control=tree.control(nobs=19622))
+#summary(t1)
+plot(t1)
+text(t1, all = T)
+t2 <- prune.misclass(t1, best = 6)
+t2
+pData1 <- predict(t2, EtrainZ, type="class")
+sum(EtrainZ$classe==pData1)/length(pData1)
+```
+
+**Model Verification **
+```{r,  results='hold',message=FALSE,warning=FALSE,echo=TRUE,cache=TRUE,fig.height=8}
+set.seed(12234)
+library(randomForest)
+rfZ1 <- randomForest(classe ~ ., data=EtrainZ,mtry=2,ntree=50,importance=TRUE)
+summary(rfZ1)
+```
+
+** Conclusion **
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
