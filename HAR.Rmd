@@ -1,0 +1,121 @@
+---
+title: "Human Activity Prediction - Weightlifting"
+author: "Raj Maddali"
+date: "January 22, 2016"
+output: html_document
+---
+
+**Executive Summary **
+
+We attempt to predict an activity by using data collected by sensors. Based on the quality of the data collected and analysed the model presented below perfoms a good prediction of the activity on the test data set.
+
+**Data Acquisition **
+
+Training and Testing sets data has been provided in two distinct files which are loaded below
+```{r, results='hold',message=FALSE,echo=TRUE,cache=TRUE}
+Etrain <- read.csv("pml-training.csv")
+dim(Etrain)
+Etest <- read.csv("pml-testing.csv")
+dim(Etest)
+```
+
+**Data Analysis and Preparation**
+
+Descriptive variables  ("X","user_name","raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp","new_window","num_window"  ) have been excluded. Also columns with sparse data have been excluded. The data in these sparse columns are summary variables. These steps bring the column count to a more predictible count (52). A corrolation plot below shows that we are left with a vast majority of variables that aren't strongly correlated to each other. 
+
+A display of feature plots of a few variables with high variance displays some deviation by classe. There is a large overlap in their data overlaps. It appears that the dependent variable interaction for each classe is far more complex.
+
+```{r, results='hold',message=FALSE,warning=FALSE,echo=TRUE,cache=TRUE,fig.height=6}
+library(caret)
+library(matrixStats)
+library(plyr)
+
+EtrainX <- Etrain[,-c(1:7)]
+indx <- sapply(EtrainX[,-153], is.factor)
+EtrainX[indx] <- lapply(EtrainX[indx], function(x) as.numeric(as.character(x)))
+Etrain_NZ_Remove0 <- EtrainX[,(colSums(is.na(EtrainX[,-153])))==0 ]
+
+nzv <- nearZeroVar(Etrain_NZ_Remove0[,-153],saveMetrics=TRUE)
+Etrain_NZ_Remove <- Etrain_NZ_Remove0[,nzv$nzv==FALSE]
+
+# make trianing set
+library(caret)
+training <- createDataPartition(y = Etrain_NZ_Remove$classe, p = 0.9, list = FALSE)
+Etrain_CV <- Etrain_NZ_Remove[-training, ]
+dim(Etrain_CV)
+
+Etrain_TR <- Etrain_NZ_Remove[training, ]
+#Etrain_TR <- Etrain_NZ_Remove
+dim(Etrain_TR)
+classeIndex <- which( colnames(Etrain_TR)=="classe" )
+
+library(corrplot)
+cor1 <- cor(Etrain_TR[,-classeIndex])
+corrplot(cor1,type="upper",tl.cex = .6)
+
+df1 <- data.frame(apply(Etrain_TR[,1:classeIndex],2,var,na.rm=TRUE))
+df1$colNum <- 1:nrow(df1)
+names(df1) <- c("coeffs","colnum")
+df1 <- arrange(df1,desc(coeffs))
+featurePlot(x=Etrain_TR[,c(as.vector(df1$colnum[1:8]))],y=Etrain_TR$classe,plot="box",layout = c(4,2), labels = c("Classe Outcome",""))
+```
+
+**Model Building - Tree Model**
+
+There are many variables and the outcome to choose any variant of a General Linear Model.  A tree based model leads us to rather unsatisfactory resulst. The classification tree below provides a very mediocre fit. It is very good at classifying classe A, but poor at the other. There are two many variable interactions for good tree performance.
+
+```{r,  results='hold',message=FALSE,warning=FALSE,echo=TRUE,cache=TRUE,fig.height=4}
+set.seed(12234)
+library(tree)
+t1 <- tree(classe ~ .,data=Etrain_TR,split=c("gini"),control=tree.control(nobs=dim(Etrain_TR)[1],mincut=2000))
+summary(t1)
+plot(t1)
+text(t1, all = TRUE)
+t2 <- prune.misclass(t1, best = 6)
+#t2
+pData1 <- predict(t2, Etrain_TR, type="class")
+sum(Etrain_TR$classe==pData1)/length(pData1)
+```
+
+**Model Building - Random Forest**
+
+ Random Forest model provides with a very good result. The mtry variable when set to approximately sqrt(Variable) provides a very good result.
+ 
+```{r,  results='hold',message=FALSE,warning=FALSE,echo=TRUE,cache=TRUE,fig.height=8}
+set.seed(12234)
+library(randomForest)
+rfZ1 <- randomForest(classe ~ ., data=Etrain_TR,mtry=7,ntree=500,importance=TRUE)
+```
+
+**Model Analyses - Random Forest**
+
+```{r,  results='hold',message=FALSE,warning=FALSE,echo=TRUE,cache=TRUE,fig.height=8}
+set.seed(12234)
+#varImp(rfZ1)
+varImpPlot(rfZ1,main="Variable Importance Plot")
+rfZ1$confusion
+print(rfZ1)
+```
+
+
+**Model - Prediction of Test Cases**
+
+The final prediction using the Test set provides the following result. This proved to be a perfect match upon submission into the quiz.
+
+```{r,  results='hold',message=FALSE,warning=FALSE,echo=TRUE,cache=TRUE,fig.height=8}
+set.seed(12234)
+library(randomForest)
+predict(rfZ1,newdata=Etest)
+```
+
+**Model - Out Of Sample Prediction**
+
+Using the Cross Validation data we get a very good Out of Sample Prediction.
+
+```{r,  results='hold',message=FALSE,warning=FALSE,echo=TRUE,cache=TRUE,fig.height=8}
+set.seed(12234)
+Etrain_CV_Predict <- predict(rfZ1, Etrain_CV)
+Etrain_CV_PredictError.accuracy <- sum(Etrain_CV_Predict == Etrain_CV$classe)/length(Etrain_CV_Predict)
+1-Etrain_CV_PredictError.accuracy
+```
+
